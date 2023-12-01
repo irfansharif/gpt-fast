@@ -21,8 +21,8 @@ torch._inductor.config.fx_graph_cache = True # Experimental feature to reduce co
 wd = Path(__file__).parent.parent.resolve()
 sys.path.append(str(wd))
 
-from model import Transformer
-from tp import maybe_init_dist
+from .model import Transformer
+from .tp import maybe_init_dist
 from sentencepiece import SentencePieceProcessor
 
 def multinomial_sample_one_no_sync(probs_sort): # Does multinomial sampling without a cuda synchronization
@@ -206,7 +206,7 @@ def _load_model(checkpoint_path, device, precision, use_tp):
 
     if "int8" in str(checkpoint_path):
         print("Using int8 weight-only quantization!")
-        from quantize import WeightOnlyInt8QuantHandler
+        from .quantize import WeightOnlyInt8QuantHandler
         simple_quantizer = WeightOnlyInt8QuantHandler(model)
         model = simple_quantizer.convert_for_runtime()
 
@@ -215,7 +215,7 @@ def _load_model(checkpoint_path, device, precision, use_tp):
         path_comps = checkpoint_path.name.split(".")
         assert path_comps[-2].startswith("g")
         groupsize = int(path_comps[-2][1:])
-        from quantize import WeightOnlyInt4QuantHandler
+        from .quantize import WeightOnlyInt4QuantHandler
         simple_quantizer = WeightOnlyInt4QuantHandler(model, groupsize)
         model = simple_quantizer.convert_for_runtime()
 
@@ -223,7 +223,7 @@ def _load_model(checkpoint_path, device, precision, use_tp):
     model.load_state_dict(checkpoint, assign=True)
 
     if use_tp:
-        from tp import apply_tp
+        from .tp import apply_tp
         print("Applying tensor parallel to model ...")
         apply_tp(model)
 
@@ -232,7 +232,7 @@ def _load_model(checkpoint_path, device, precision, use_tp):
 
 B_INST, E_INST = "[INST]", "[/INST]"
 
-def main(
+def generate_main(
     prompt: str = "Hello, my name is",
     interactive: bool = False,
     num_samples: int = 5,
@@ -290,14 +290,14 @@ def main(
             torch._inductor.config.triton.cudagraph_trees = False # Bug with cudagraph trees in this case
 
         if is_speculative:
-            global model_forward, logits_to_prob
+            global model_forward, logits_to_probs
             model_forward = torch.compile(model_forward, mode="reduce-overhead", fullgraph=True)
 
         global decode_one_token, prefill
         decode_one_token = torch.compile(decode_one_token, mode="reduce-overhead", fullgraph=True)
 
         # Uncomment to squeeze more perf out of prefill
-        if args.compile_prefill:
+        if compile_prefill:
             prefill = torch.compile(prefill, fullgraph=True, dynamic=True)
 
 
@@ -342,6 +342,7 @@ def main(
         with prof:
             y, metrics = generate(
                 model,
+                None,
                 encoded,
                 max_new_tokens,
                 draft_model=draft_model,
@@ -401,7 +402,7 @@ if __name__ == '__main__':
     parser.add_argument('--draft_checkpoint_path', type=Path, default=None, help='Draft checkpoint path.')
 
     args = parser.parse_args()
-    main(
+    generate_main(
         args.prompt, args.interactive, args.num_samples, args.max_new_tokens, args.top_k,
         args.temperature, args.checkpoint_path, args.compile, args.compile_prefill, args.profile, args.draft_checkpoint_path, args.speculate_k
     )

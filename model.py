@@ -106,6 +106,8 @@ class Transformer(nn.Module):
 
     def forward(self, idx: Tensor, input_pos: Optional[Tensor] = None) -> Tensor:
         assert self.freqs_cis is not None, "Caches must be initialized first"
+        assert input_pos is not None, "Input positions must be provided"
+
         mask = self.causal_mask[None, None, input_pos]
         freqs_cis = self.freqs_cis[input_pos]
         x = self.tok_embeddings(idx)
@@ -169,12 +171,14 @@ class Attention(nn.Module):
         k = k.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         v = v.view(bsz, seqlen, self.n_local_heads, self.head_dim)
 
-        q = apply_rotary_emb(q, freqs_cis)
-        k = apply_rotary_emb(k, freqs_cis)
+        q = self.apply_rotary_emb(q, freqs_cis)
+        k = self.apply_rotary_emb(k, freqs_cis)
 
-        q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
 
-        if self.kv_cache is not None:
+        if self.kv_cache is not None and input_pos is not None:
             k, v = self.kv_cache.update(input_pos, k, v)
 
         k = k.repeat_interleave(self.n_head // self.n_local_heads, dim=1)
@@ -185,6 +189,22 @@ class Attention(nn.Module):
 
         y = self.wo(y)
         return y
+
+    def apply_rotary_emb(self, x: Tensor, freqs_cis: Tensor) -> Tensor:
+        # xshaped = x.float().reshape(*x.shape[:-1], -1, 2)
+        xshaped = x.float().reshape(x.size(0), x.size(1), x.size(2), -1, 2)
+        freqs_cis = freqs_cis.view(1, xshaped.size(1), 1, xshaped.size(3), 2)
+        x_out2 = torch.stack(
+            [
+                xshaped[..., 0] * freqs_cis[..., 0] - xshaped[..., 1] * freqs_cis[..., 1],
+                xshaped[..., 1] * freqs_cis[..., 0] + xshaped[..., 0] * freqs_cis[..., 1],
+            ],
+            -1,
+        )
+
+        x_out2 = x_out2.flatten(3)
+        # return x_out2.type_as(x)
+        return x_out2.to(x.dtype)
 
 
 class FeedForward(nn.Module):
@@ -221,18 +241,3 @@ def precompute_freqs_cis(
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     cache = torch.stack([freqs_cis.real, freqs_cis.imag], dim=-1)
     return cache.to(dtype=torch.bfloat16)
-
-
-def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
-    xshaped = x.float().reshape(*x.shape[:-1], -1, 2)
-    freqs_cis = freqs_cis.view(1, xshaped.size(1), 1, xshaped.size(3), 2)
-    x_out2 = torch.stack(
-        [
-            xshaped[..., 0] * freqs_cis[..., 0] - xshaped[..., 1] * freqs_cis[..., 1],
-            xshaped[..., 1] * freqs_cis[..., 0] + xshaped[..., 0] * freqs_cis[..., 1],
-        ],
-        -1,
-    )
-
-    x_out2 = x_out2.flatten(3)
-    return x_out2.type_as(x)

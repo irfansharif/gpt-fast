@@ -19,11 +19,11 @@ from pathlib import Path
 from sentencepiece import SentencePieceProcessor
 
 try:
-    from GPTQ import GenericGPTQRunner, InputRecorder, lm_eval
+    from .GPTQ import GenericGPTQRunner, InputRecorder, lm_eval
 except:
     pass
 
-from model import Transformer
+from .model import Transformer
 
 ##### Quantization Primitives ######
 

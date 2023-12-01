@@ -188,7 +188,7 @@ def eval(
     return eval_results
 
 
-def main(
+def evaluate(
     checkpoint_path: Path = Path("checkpoints/meta-llama/Llama-2-7b-chat-hf/lit_model.pth"),
     compile: bool = False,
     tasks: list = ["hellaswag"],
@@ -257,6 +257,6 @@ if __name__ == '__main__':
     parser.add_argument('--max_seq_length', type=int, default=None, help='maximum length sequence to evaluate')
 
     args = parser.parse_args()
-    main(
+    evaluate(
         Path(args.checkpoint_path), args.compile, args.tasks, args.limit, args.max_seq_length,
     )
